@@ -30,6 +30,7 @@ import Button from './ui/Button';
 import LoadingBlockchain from './ui/LoadingBlockchain';
 import { downloadIPFSFile } from '../utils/download';
 import { useAuth } from '../context/AuthContext';
+import { MOCK_DIPLOMAS } from '../config/mockData';
 
 const ITEMS_PER_PAGE = 5;
 
@@ -145,7 +146,12 @@ const Admin: React.FC = () => {
         }
       }));
       
-      setIssuedDiplomas(diplomas.filter(d => d !== null).sort((a: any, b: any) => b.timestamp - a.timestamp));
+      const blockchainDiplomas = diplomas.filter(d => d !== null);
+      
+      // Merge with mock diplomas for testing
+      const allDiplomas = [...blockchainDiplomas, ...MOCK_DIPLOMAS];
+      
+      setIssuedDiplomas(allDiplomas.sort((a: any, b: any) => b.timestamp - a.timestamp));
     } catch (err) {
       console.error("Failed to fetch diplomas", err);
     } finally {

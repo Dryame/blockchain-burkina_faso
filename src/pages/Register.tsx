@@ -9,14 +9,11 @@ import {
   Building2, 
   GraduationCap, 
   Briefcase,
-  Wallet,
   AlertCircle,
   CheckCircle2,
-  ShieldCheck,
-  IdCard,
   ChevronLeft
 } from 'lucide-react';
-import { saveUser, checkWalletAccreditation, checkDiplomaExistsForStudent } from '../utils/auth';
+import { saveUser, checkDiplomaExistsForStudent } from '../utils/auth';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 
@@ -31,9 +28,6 @@ const Register: React.FC = () => {
     email: '',
     password: '',
     confirmPassword: '',
-    walletAddress: '',
-    studentId: '',
-    company: '',
     birthDate: ''
   });
 
@@ -50,19 +44,6 @@ const Register: React.FC = () => {
     setLoading(true);
 
     try {
-      // Role-specific validation
-      if (role === 'institution') {
-        const isAccredited = await checkWalletAccreditation(formData.walletAddress);
-        if (!isAccredited) {
-          throw new Error("L'adresse wallet indiquée n'est pas accréditée sur la blockchain. Contactez l'administration centrale.");
-        }
-      } else if (role === 'graduate') {
-        const diplomaExists = await checkDiplomaExistsForStudent(formData.studentId);
-        if (!diplomaExists) {
-          throw new Error("Aucun diplôme correspondant à ce numéro n'a été trouvé on-chain. Vérifiez le numéro ou contactez votre établissement.");
-        }
-      }
-
       saveUser({
         ...formData,
         role,
@@ -74,16 +55,6 @@ const Register: React.FC = () => {
       setError(err.message);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const connectWallet = async () => {
-    if (!window.ethereum) return setError('MetaMask non trouvé');
-    try {
-      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-      setFormData({ ...formData, walletAddress: accounts[0] });
-    } catch (err) {
-      setError('Connexion wallet échouée');
     }
   };
 
@@ -205,50 +176,6 @@ const Register: React.FC = () => {
                         />
                       </div>
                     </div>
-
-                    {role === 'institution' && (
-                      <div className="space-y-2">
-                        <label className="text-[11px] font-black text-ui-muted uppercase tracking-widest ml-1">Adresse Wallet MetaMask</label>
-                        <div className="flex gap-2">
-                          <div className="relative flex-1">
-                            <Wallet className="absolute left-4 top-1/2 -translate-y-1/2 text-ui-muted" size={18} />
-                            <input
-                              type="text"
-                              value={formData.walletAddress}
-                              onChange={(e) => setFormData({...formData, walletAddress: e.target.value})}
-                              className="input-field w-full pl-12 font-mono text-xs"
-                              placeholder="0x..."
-                              required
-                            />
-                          </div>
-                          <button 
-                            type="button"
-                            onClick={connectWallet}
-                            className="bg-ui-surface border-2 border-ui-border hover:border-ui-text px-4 rounded-2xl transition-all"
-                          >
-                            <ShieldCheck size={20} />
-                          </button>
-                        </div>
-                        <p className="text-[9px] text-burkina-red font-bold uppercase ml-1 italic">* Doit être accréditée on-chain</p>
-                      </div>
-                    )}
-
-                    {role === 'graduate' && (
-                      <div className="space-y-2">
-                        <label className="text-[11px] font-black text-ui-muted uppercase tracking-widest ml-1">Numéro Matricule / ID Diplôme</label>
-                        <div className="relative">
-                          <IdCard className="absolute left-4 top-1/2 -translate-y-1/2 text-ui-muted" size={18} />
-                          <input
-                            type="text"
-                            value={formData.studentId}
-                            onChange={(e) => setFormData({...formData, studentId: e.target.value})}
-                            className="input-field w-full pl-12"
-                            placeholder="Ex: DIPL-2024-001"
-                            required
-                          />
-                        </div>
-                      </div>
-                    )}
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div className="space-y-2">

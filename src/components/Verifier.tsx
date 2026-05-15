@@ -30,6 +30,7 @@ import Card from './ui/Card';
 import Button from './ui/Button';
 import { downloadIPFSFile, generateAttestationPDF } from '../utils/download';
 import { useAuth } from '../context/AuthContext';
+import { MOCK_DIPLOMAS } from '../config/mockData';
 
 const Verifier: React.FC = () => {
   const { user } = useAuth();
@@ -71,6 +72,22 @@ const Verifier: React.FC = () => {
       await new Promise(r => setTimeout(r, 1000));
       setStep(3);
       await new Promise(r => setTimeout(r, 600));
+
+      // Check mock diplomas first
+      const mockDiploma = MOCK_DIPLOMAS.find(d => d.id === id);
+      if (mockDiploma) {
+        const resultData = {
+          ...mockDiploma,
+          isValid: true,
+          institutionAddress: "0xMockInstitution",
+          institutionName: "Université Polytechnique de Ouagadougou",
+          verifiedAt: new Date().toISOString()
+        };
+        setResult(resultData);
+        if (user?.role === 'verifier') addToHistory(resultData);
+        setLoading(false);
+        return;
+      }
 
       const provider = new ethers.JsonRpcProvider("https://rpc-amoy.polygon.technology");
       const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
