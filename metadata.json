@@ -1,0 +1,6 @@
+{
+  "name": "DiploChain",
+  "description": "Système de certification de diplômes sur blockchain pour éliminer les faux diplômes au Burkina Faso.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["blockchain", "web3", "ipfs"]
+}

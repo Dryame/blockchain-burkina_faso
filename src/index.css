@@ -1,0 +1,21 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Playfair+Display:wght@700;900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Playfair Display", serif;
+}
+
+@layer base {
+  body {
+    @apply bg-[#050505] text-gray-200 antialiased;
+  }
+}
+
+.diploma-card {
+  @apply bg-white p-8 border-t-8 border-[#EF2B2D] shadow-2xl relative overflow-hidden;
+}
+
+.dark-glass {
+  @apply bg-white/5 backdrop-blur-md border border-white/10;
+}
