@@ -1,82 +1,106 @@
 import React, { useState, useEffect } from 'react';
-import { motion } from 'motion/react';
-import { ShieldCheck, Upload, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
-import { getContract, formatBlockchainError } from '../utils/blockchain';
+import { ethers } from 'ethers';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  ShieldCheck, 
+  Upload, 
+  Loader2, 
+  AlertCircle, 
+  FileText, 
+  CheckCircle2, 
+  PlusCircle,
+  Database,
+  ExternalLink,
+  Wallet
+} from 'lucide-react';
+import { CONTRACT_ADDRESS, CONTRACT_ABI } from '../config/contract';
 import { uploadToIPFS } from '../utils/ipfs';
+import Button from './ui/Button';
+import Card from './ui/Card';
+import LoadingBlockchain from './ui/LoadingBlockchain';
 
 export default function Admin() {
   const [account, setAccount] = useState(null);
   const [institutionName, setInstitutionName] = useState("");
-  const [isAccredited, setIsAccredited] = useState(false);
+  const [isAuthorized, setIsAuthorized] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [file, setFile] = useState(null);
   const [status, setStatus] = useState({ type: '', message: '' });
-  
-  // Formulaire
   const [formData, setFormData] = useState({
-    id: `DIPL-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
+    id: `DIPL-${new Date().getFullYear()}-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`,
     fullName: '',
     birthDate: '',
     title: '',
-    mention: 'Assez Bien',
-    year: new Date().getFullYear(),
+    mention: 'Asser Bien',
+    year: new Date().getFullYear()
   });
-  const [file, setFile] = useState(null);
 
   useEffect(() => {
     checkConnection();
     if (window.ethereum) {
-      window.ethereum.on('accountsChanged', checkConnection);
+      window.ethereum.on('accountsChanged', (accounts) => {
+        setAccount(accounts.length > 0 ? accounts[0] : null);
+      });
     }
   }, []);
 
+  useEffect(() => {
+    if (account) checkAuthorization();
+  }, [account]);
+
   const checkConnection = async () => {
-    if (!window.ethereum) return;
-    try {
+    if (window.ethereum) {
       const accounts = await window.ethereum.request({ method: 'eth_accounts' });
-      if (accounts.length > 0) {
-        setAccount(accounts[0]);
-        verifyAccreditation(accounts[0]);
-      }
-    } catch (err) {
-      console.error(err);
+      if (accounts.length > 0) setAccount(accounts[0]);
     }
   };
 
   const connectWallet = async () => {
-    try {
-      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-      setAccount(accounts[0]);
-      verifyAccreditation(accounts[0]);
-    } catch (err) {
-      setStatus({ type: 'error', message: "Connexion MetaMask échouée." });
+    if (window.ethereum) {
+      try {
+        const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+        setAccount(accounts[0]);
+      } catch (err) {
+        console.error("Connection failed", err);
+      }
     }
   };
 
-  const verifyAccreditation = async (addr) => {
+  const checkAuthorization = async () => {
     try {
-      const contract = await getContract();
-      const info = await contract.institutions(addr);
-      setInstitutionName(info.name);
-      setIsAccredited(info.isAccredited);
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
+      
+      const institution = await contract.institutions(account);
+      if (institution.isRegistered) {
+        setIsAuthorized(true);
+        setInstitutionName(institution.name);
+      } else {
+        setIsAuthorized(false);
+      }
     } catch (err) {
       console.error(err);
+      setIsAuthorized(false);
     }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!file) return setStatus({ type: 'error', message: "Veuillez uploader le PDF du diplôme." });
-    
+    if (!file) return setStatus({ type: 'error', message: 'Veuillez sélectionner un fichier PDF' });
+
     setLoading(true);
-    setStatus({ type: 'info', message: "Upload du PDF sur IPFS en cours..." });
+    setStatus({ type: 'info', message: 'Phase 1/2 : Hébergement du document sur IPFS...' });
 
     try {
       const ipfsHash = await uploadToIPFS(file);
-      
-      setStatus({ type: 'info', message: "Signature de la transaction blockchain..." });
 
-      const contract = await getContract();
-      const tx = await contract.emitDiploma(
+      setStatus({ type: 'info', message: 'Phase 2/2 : Signature blockchain en attente...' });
+
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+
+      const tx = await contract.issueDiploma(
         formData.id,
         formData.fullName,
         formData.birthDate,
@@ -86,23 +110,22 @@ export default function Admin() {
         ipfsHash
       );
 
+      setStatus({ type: 'info', message: 'Transaction envoyée ! Confirmation en cours...' });
       await tx.wait();
-      
-      setStatus({ 
-        type: 'success', 
-        message: `Diplôme émis avec succès ! ID: ${formData.id}` 
-      });
-      
+
+      setStatus({ type: 'success', message: 'Diplôme certifié avec succès sur Polygon !' });
+      setFile(null);
+      // Generate new ID
       setFormData({
         ...formData,
-        id: `DIPL-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
+        id: `DIPL-${new Date().getFullYear()}-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`,
         fullName: '',
         birthDate: '',
+        title: ''
       });
-      setFile(null);
-
     } catch (err) {
-      setStatus({ type: 'error', message: formatBlockchainError(err) });
+      console.error(err);
+      setStatus({ type: 'error', message: "Échec : " + (err.reason || err.message) });
     } finally {
       setLoading(false);
     }
@@ -110,27 +133,38 @@ export default function Admin() {
 
   if (!account) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 text-center">
-        <ShieldCheck size={64} className="text-[#009A00] mb-4" />
-        <h2 className="text-3xl font-bold text-white mb-2">Interface Établissement</h2>
-        <p className="text-gray-400 mb-8 max-w-md">Connectez votre portefeuille MetaMask pour émettre des diplômes certifiés.</p>
-        <button 
-          onClick={connectWallet}
-          className="bg-[#009A00] text-white px-8 py-3 rounded-lg font-bold hover:bg-[#007A00] transition-all shadow-lg flex items-center gap-2"
+      <div className="flex flex-col items-center justify-center py-40 px-4 text-center">
+        <motion.div
+           initial={{ scale: 0 }}
+           animate={{ scale: 1 }}
+           className="bg-burkina-green/10 p-8 rounded-[40px] mb-8 border border-burkina-green/20"
         >
-          Connecter MetaMask
-        </button>
+          <ShieldCheck size={80} className="text-burkina-green" />
+        </motion.div>
+        <h2 className="heading-lg text-ui-text mb-4">Espace Institutionnel</h2>
+        <p className="body-lg mb-12 max-w-md">Connectez votre portefeuille MetaMask pour émettre des diplômes certifiés par DiploChain.</p>
+        <Button size="lg" icon={Wallet} onClick={connectWallet}>
+          Connecter Wallet
+        </Button>
       </div>
     );
   }
 
-  if (!isAccredited) {
+  if (!isAuthorized && !loading && status.type !== 'success') {
     return (
-      <div className="max-w-2xl mx-auto py-20 text-center">
-        <AlertCircle size={64} className="text-[#EF2B2D] mx-auto mb-4" />
-        <h2 className="text-2xl font-bold text-white mb-2">Accès Non Autorisé</h2>
-        <p className="text-gray-400 mb-4">L'adresse {account} n'est pas répertoriée comme établissement accrédité.</p>
-        <div className="bg-white/5 border border-white/10 p-4 rounded text-xs font-mono break-all text-gray-500">{account}</div>
+      <div className="max-w-2xl mx-auto py-40 px-4 text-center">
+        <motion.div
+          animate={{ rotate: [0, 10, -10, 0] }}
+          transition={{ duration: 2, repeat: Infinity }}
+          className="bg-burkina-red/10 p-8 rounded-[40px] mb-8 border border-burkina-red/20 inline-block"
+        >
+          <AlertCircle size={80} className="text-burkina-red" />
+        </motion.div>
+        <h2 className="heading-lg text-ui-text mb-4">Accès Non Autorisé</h2>
+        <p className="body-lg mb-8">L'adresse <code className="text-burkina-red font-mono bg-ui-surface px-2 py-1 rounded">{account.substring(0, 8)}...</code> n'est pas accréditée par le Ministère de l'Enseignement Supérieur.</p>
+        <div className="p-6 bg-ui-card border border-ui-border rounded-3xl text-sm font-mono break-all text-ui-muted">
+          Veuillez contacter DiploChain pour obtenir une accréditation établissement.
+        </div>
       </div>
     );
   }
@@ -139,136 +173,207 @@ export default function Admin() {
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="max-w-4xl mx-auto py-10 px-4"
+      className="max-w-5xl mx-auto py-32 px-4"
     >
-      <div className="bg-[#121212] rounded-2xl shadow-2xl overflow-hidden border border-white/5">
-        <div className="bg-gradient-to-r from-[#009A00] to-[#004d00] p-6 text-white leading-tight border-b border-white/10">
-          <h2 className="text-2xl font-bold">Émettre un Diplôme Certifié</h2>
-          <p className="opacity-90">{institutionName}</p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-semibold text-gray-400 mb-1">ID du Diplôme (Unique)</label>
-              <input 
-                type="text" 
-                value={formData.id}
-                onChange={(e) => setFormData({...formData, id: e.target.value})}
-                className="w-full p-3 bg-white/5 border border-white/10 text-white rounded-lg focus:ring-2 focus:ring-[#009A00] outline-none transition-all"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-400 mb-1">Nom Complet du Diplômé</label>
-              <input 
-                type="text" 
-                placeholder="Ex: Aminata Ouédraogo"
-                value={formData.fullName}
-                onChange={(e) => setFormData({...formData, fullName: e.target.value})}
-                className="w-full p-3 bg-white/5 border border-white/10 text-white rounded-lg focus:ring-2 focus:ring-[#009A00] outline-none"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-gray-400 mb-1">Date de Naissance</label>
-              <input 
-                type="text" 
-                placeholder="JJ/MM/AAAA"
-                value={formData.birthDate}
-                onChange={(e) => setFormData({...formData, birthDate: e.target.value})}
-                className="w-full p-3 bg-white/5 border border-white/10 text-white rounded-lg focus:ring-2 focus:ring-[#009A00] outline-none"
-                required
-              />
-            </div>
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-12">
+        <div>
+          <div className="flex items-center gap-3 mb-4">
+             <div className="px-3 py-1 rounded-full bg-burkina-green/10 border border-burkina-green/30 text-burkina-green text-[10px] font-black uppercase tracking-widest">
+                Portail Accrédité ✓
+             </div>
           </div>
+          <h1 className="heading-xl text-ui-text tracking-tighter">
+            Émettre un <span className="text-burkina-green">Diplôme</span>
+          </h1>
+          <p className="text-ui-muted mt-2 font-bold uppercase italic tracking-wider">{institutionName}</p>
+        </div>
+        
+        <div className="flex gap-4">
+          <div className="bg-ui-card border border-ui-border p-4 rounded-2xl flex flex-col items-center w-32 shadow-lg">
+             <span className="text-[10px] font-black text-ui-muted uppercase tracking-widest">Session</span>
+             <span className="text-xl font-bold text-ui-text italic">2024</span>
+          </div>
+          <div className="bg-ui-card border border-ui-border p-4 rounded-2xl flex flex-col items-center w-32 shadow-lg">
+             <span className="text-[10px] font-black text-ui-muted uppercase tracking-widest">Émis</span>
+             <span className="text-xl font-bold text-burkina-yellow italic">124</span>
+          </div>
+        </div>
+      </div>
 
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-semibold text-gray-400 mb-1">Intitulé du Diplôme</label>
-              <input 
-                type="text" 
-                placeholder="Ex: Licence en Informatique"
-                value={formData.title}
-                onChange={(e) => setFormData({...formData, title: e.target.value})}
-                className="w-full p-3 bg-white/5 border border-white/10 text-white rounded-lg focus:ring-2 focus:ring-[#009A00] outline-none"
-                required
-              />
+      <AnimatePresence mode="wait">
+        {loading ? (
+          <motion.div
+            key="loading"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <Card className="py-20">
+              <LoadingBlockchain message={status.message} />
+            </Card>
+          </motion.div>
+        ) : (
+          <motion.form 
+            key="form"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            onSubmit={handleSubmit}
+            className="grid grid-cols-1 lg:grid-cols-3 gap-8"
+          >
+            <div className="lg:col-span-2 space-y-8">
+              <Card className="p-8" hoverEffect={false}>
+                <div className="flex items-center gap-3 mb-8 border-b border-ui-border pb-4">
+                  <PlusCircle className="text-burkina-green" />
+                  <h3 className="text-xl font-bold text-ui-text uppercase tracking-tight">Informations Académiques</h3>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <label className="text-[11px] font-black text-ui-muted uppercase tracking-widest ml-1">Matricule Diplôme</label>
+                    <input 
+                      type="text" 
+                      value={formData.id}
+                      onChange={(e) => setFormData({...formData, id: e.target.value})}
+                      className="input-field w-full font-mono text-burkina-green font-bold"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[11px] font-black text-ui-muted uppercase tracking-widest ml-1">Nom Complet</label>
+                    <input 
+                      type="text" 
+                      placeholder="Ex: Aminata Ouédraogo"
+                      value={formData.fullName}
+                      onChange={(e) => setFormData({...formData, fullName: e.target.value})}
+                      className="input-field w-full font-bold"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[11px] font-black text-ui-muted uppercase tracking-widest ml-1">Date de Naissance</label>
+                    <input 
+                      type="text" 
+                      placeholder="JJ/MM/AAAA"
+                      value={formData.birthDate}
+                      onChange={(e) => setFormData({...formData, birthDate: e.target.value})}
+                      className="input-field w-full font-bold"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[11px] font-black text-ui-muted uppercase tracking-widest ml-1">Intitulé du Diplôme</label>
+                    <input 
+                      type="text" 
+                      placeholder="Ex: Licence en Informatique"
+                      value={formData.title}
+                      onChange={(e) => setFormData({...formData, title: e.target.value})}
+                      className="input-field w-full font-bold"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[11px] font-black text-ui-muted uppercase tracking-widest ml-1">Mention</label>
+                    <div className="relative">
+                      <select 
+                        value={formData.mention}
+                        onChange={(e) => setFormData({...formData, mention: e.target.value})}
+                        className="input-field w-full appearance-none cursor-pointer font-bold"
+                      >
+                        {['Passable', 'Assez Bien', 'Bien', 'Très Bien', 'Excellent'].map(m => (
+                          <option key={m} className="bg-ui-bg">{m}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[11px] font-black text-ui-muted uppercase tracking-widest ml-1">Année</label>
+                    <input 
+                      type="number" 
+                      value={formData.year}
+                      onChange={(e) => setFormData({...formData, year: parseInt(e.target.value)})}
+                      className="input-field w-full font-bold"
+                      required
+                    />
+                  </div>
+                </div>
+              </Card>
+
+              {status.message && status.type !== 'info' && (
+                <div className={`p-6 rounded-3xl border flex items-center gap-4 ${
+                  status.type === 'error' ? 'bg-burkina-red/10 border-burkina-red/30 text-burkina-red' : 'bg-burkina-green/10 border-burkina-green/30 text-burkina-green'
+                }`}>
+                  {status.type === 'error' ? <AlertCircle /> : <CheckCircle2 />}
+                  <span className="font-black uppercase italic tracking-tight">{status.message}</span>
+                </div>
+              )}
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-400 mb-1">Mention</label>
-                <select 
-                  value={formData.mention}
-                  onChange={(e) => setFormData({...formData, mention: e.target.value})}
-                  className="w-full p-3 bg-white/5 border border-white/10 text-white rounded-lg outline-none"
-                >
-                  <option className="bg-[#121212]">Passable</option>
-                  <option className="bg-[#121212]">Assez Bien</option>
-                  <option className="bg-[#121212]">Bien</option>
-                  <option className="bg-[#121212]">Très Bien</option>
-                  <option className="bg-[#121212]">Excellent</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-gray-400 mb-1">Année</label>
-                <input 
-                  type="number" 
-                  value={formData.year}
-                  onChange={(e) => setFormData({...formData, year: parseInt(e.target.value)})}
-                  className="w-full p-3 bg-white/5 border border-white/10 text-white rounded-lg outline-none"
-                  required
-                />
-              </div>
-            </div>
-            
-            <div className="pt-2">
-              <label className="block text-sm font-semibold text-gray-400 mb-2">Fichier PDF du Diplôme</label>
-              <div className="relative border-2 border-dashed border-white/10 bg-white/5 rounded-lg p-6 hover:border-[#009A00] transition-colors group">
-                <input 
-                  type="file" 
-                  accept=".pdf"
-                  onChange={(e) => setFile(e.target.files[0])}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                />
-                <div className="text-center">
-                  <Upload className="mx-auto text-gray-500 group-hover:text-[#009A00] mb-2" />
-                  <p className="text-sm text-gray-500 overflow-hidden text-ellipsis px-2">
-                    {file ? file.name : "Cliquez ou glissez le PDF ici"}
+
+            <div className="space-y-8">
+              <Card className="p-8" hoverEffect={false}>
+                <div className="flex items-center gap-3 mb-6">
+                  <Database className="text-burkina-red" />
+                  <h3 className="text-base font-bold text-ui-text uppercase tracking-tight">Fichier IPFS</h3>
+                </div>
+                
+                <div className={`border-2 border-dashed rounded-3xl p-8 transition-all relative group overflow-hidden ${
+                  file ? 'border-burkina-green bg-burkina-green/5' : 'border-ui-border hover:border-burkina-red'
+                }`}>
+                  <input 
+                    type="file" 
+                    accept=".pdf"
+                    onChange={(e) => setFile(e.target.files[0])}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                  />
+                  <div className="text-center relative z-0">
+                    <div className={`mx-auto w-16 h-16 rounded-2xl flex items-center justify-center mb-4 transition-colors ${
+                      file ? 'bg-burkina-green text-white' : 'bg-ui-surface text-ui-muted group-hover:text-burkina-red'
+                    }`}>
+                      <Upload size={32} />
+                    </div>
+                    {file ? (
+                      <p className="text-[13px] font-bold text-ui-text break-all px-2">{file.name}</p>
+                    ) : (
+                      <>
+                        <p className="text-xs font-black text-ui-text mb-1 uppercase tracking-widest italic">PDF Source</p>
+                        <p className="text-[9px] text-ui-muted uppercase font-bold tracking-widest">Signer numériquement</p>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-8 p-6 bg-ui-surface rounded-2xl border border-ui-border">
+                  <p className="text-[11px] text-ui-muted leading-relaxed font-bold uppercase tracking-tight">
+                    Note : DiploChain utilise <span className="text-burkina-green underline decoration-2 underline-offset-4">Polygon</span> pour une sécurité maximale. Votre signature fait autorité d'État.
                   </p>
                 </div>
-              </div>
+              </Card>
+
+              <Button 
+                type="submit" 
+                variant="primary" 
+                size="lg" 
+                className="w-full h-20 shadow-xl"
+                icon={PlusCircle}
+              >
+                SIGNER & ÉMETTRE
+              </Button>
+
+              <Card className="bg-gradient-to-br from-burkina-green/10 to-burkina-red/5 border-ui-border p-6" hoverEffect={false}>
+                 <div className="flex flex-col gap-2 font-mono">
+                    <span className="text-[10px] font-black text-ui-muted uppercase">Audit Ledger</span>
+                    <a 
+                      href={`https://amoy.polygonscan.com/address/${CONTRACT_ADDRESS}`}
+                      target="_blank"
+                      className="text-burkina-green text-[11px] flex items-center gap-2 hover:underline font-bold"
+                    >
+                      On-Chain Registry <ExternalLink size={10} />
+                    </a>
+                 </div>
+              </Card>
             </div>
-          </div>
-
-          <div className="md:col-span-2">
-            {status.message && (
-              <div className={`p-4 rounded-lg flex items-center gap-3 mb-6 ${
-                status.type === 'error' ? 'bg-red-950/20 text-red-500 border border-red-900/30' : 
-                status.type === 'success' ? 'bg-green-950/20 text-green-500 border border-green-900/30' : 
-                'bg-blue-950/20 text-blue-400 border border-blue-900/30'
-              }`}>
-                {status.type === 'error' ? <AlertCircle className="shrink-0" /> : <Loader2 className="animate-spin shrink-0" />}
-                <span>{status.message}</span>
-              </div>
-            )}
-
-            <button 
-              type="submit"
-              disabled={loading}
-              className={`w-full py-4 rounded-xl font-bold text-lg text-white shadow-xl transition-all flex items-center justify-center gap-3 ${
-                loading ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : 'bg-[#EF2B2D] hover:bg-[#D12224] active:scale-95 shadow-[#EF2B2D]/10'
-              }`}
-            >
-              {loading ? (
-                <> <Loader2 className="animate-spin" /> Traitement en cours... </>
-              ) : (
-                <> <ShieldCheck /> Émettre le Diplôme sur Blockchain </>
-              )}
-            </button>
-          </div>
-        </form>
-      </div>
+          </motion.form>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
