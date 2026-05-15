@@ -3,46 +3,52 @@ import axios from 'axios';
 const PINATA_JWT = import.meta.env.VITE_PINATA_JWT;
 
 /**
- * Upload un fichier sur IPFS via Pinata
- * @param {File} file - Le fichier PDF à uploader
- * @returns {Promise<string>} - Le hash IPFS (CID)
+ * Upload a file to IPFS via Pinata
+ * @param {File} file - The PDF file to upload
+ * @returns {Promise<string>} - The IPFS hash (CID)
  */
-export const uploadToIPFS = async (file) => {
+export const uploadToIPFS = async (file: File): Promise<string> => {
   if (!PINATA_JWT) {
-    throw new Error("Clé API Pinata manquante. Veuillez vérifier votre fichier .env");
+    // In dev, provide a mock or alert. But as per guidelines, build real integration.
+    // If key is missing, it will throw, which is correct for production-grade.
+    throw new Error("Veuillez configurer VITE_PINATA_JWT dans vos variables d'environnement.");
   }
 
   const formData = new FormData();
   formData.append('file', file);
 
   const metadata = JSON.stringify({
-    name: `diplome_${Date.now()}.pdf`,
+    name: `DiploChain_${file.name.replace(/\.pdf$/i, '')}_${Date.now()}`,
+    keyvalues: {
+      project: 'DiploChain',
+      type: 'OfficialDiploma'
+    }
   });
   formData.append('pinataMetadata', metadata);
 
   const options = JSON.stringify({
-    cidVersion: 0,
+    cidVersion: 1, // CIDv1 is better
   });
   formData.append('pinataOptions', options);
 
   try {
     const res = await axios.post("https://api.pinata.cloud/pinning/pinFileToIPFS", formData, {
-      maxBodyLength: Infinity,
       headers: {
-        'Authorization': `Bearer ${PINATA_JWT}`
+        'Authorization': `Bearer ${PINATA_JWT}`,
+        'Content-Type': 'multipart/form-data'
       }
     });
     return res.data.IpfsHash;
-  } catch (error) {
-    console.error("Erreur IPFS Pinata:", error);
-    throw error;
+  } catch (error: any) {
+    console.error("Erreur IPFS Pinata:", error.response?.data || error.message);
+    throw new Error("L'envoi vers IPFS a échoué. Vérifiez votre connexion ou vos clés API.");
   }
 };
 
 /**
- * Retourne l'URL publique pour accéder à un fichier IPFS
- * @param {string} hash - Le hash IPFS
+ * Returns the public URL to access an IPFS file
+ * @param {string} hash - The IPFS hash
  */
-export const getIPFSUrl = (hash) => {
+export const getIPFSUrl = (hash: string) => {
   return `https://gateway.pinata.cloud/ipfs/${hash}`;
 };

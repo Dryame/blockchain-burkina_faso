@@ -1,289 +1,379 @@
-import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import { QRCodeSVG } from 'qrcode.react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { ethers } from 'ethers';
 import { 
-  Search, 
+  Award, 
   Download, 
   Share2, 
-  Award, 
-  Calendar, 
-  User, 
-  Building, 
-  ExternalLink,
-  ShieldCheck,
-  AlertCircle,
-  Hash,
+  QrCode, 
+  Search, 
+  Filter, 
+  ExternalLink, 
+  Eye, 
+  LayoutGrid, 
+  List as ListIcon,
+  Star,
+  Printer,
+  ChevronRight,
   Loader2,
-  Copy,
-  CheckCircle2
+  Building2,
+  Calendar,
+  AlertCircle,
+  FileCheck
 } from 'lucide-react';
 import { CONTRACT_ADDRESS, CONTRACT_ABI } from '../config/contract';
-import Button from './ui/Button';
 import Card from './ui/Card';
-import LoadingBlockchain from './ui/LoadingBlockchain';
+import Button from './ui/Button';
+import { useAuth } from '../context/AuthContext';
+import { downloadIPFSFile, generateAttestationPDF, downloadQRCode } from '../utils/download';
 
-export default function Diplome() {
-  const [diplomaId, setDiplomaId] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [diploma, setDiploma] = useState(null);
-  const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
+const Diplome: React.FC = () => {
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [diplomas, setDiplomas] = useState<any[]>([]);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState<'yearDesc' | 'yearAsc' | 'title'>('yearDesc');
+  const [filterType, setFilterType] = useState('All');
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [selectedDiploma, setSelectedDiploma] = useState<any>(null);
 
-  const searchDiploma = async (e) => {
-    e.preventDefault();
-    if (!diplomaId) return;
+  useEffect(() => {
+    fetchDiplomas();
+    const savedFavs = localStorage.getItem(`diplo_favs_${user?.email}`);
+    if (savedFavs) setFavorites(JSON.parse(savedFavs));
+  }, []);
 
+  const fetchDiplomas = async () => {
     setLoading(true);
-    setError("");
-    setDiploma(null);
-
     try {
-      const provider = new ethers.JsonRpcProvider("https://polygon-amoy.g.alchemy.com/v2/your-api-key"); // Using public or env RPC
+      const provider = new ethers.JsonRpcProvider("https://rpc-amoy.polygon.technology");
       const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
       
-      const result = await contract.getDiploma(diplomaId);
+      // Since we don't have a direct "getDiplomasByEmail", we check the one linked to their account (studentId)
+      // and maybe others if we implement a broader search.
+      // For this prototype, we'll fetch at least the one they registered with.
+      const [result, isValid] = await contract.verifyDiploma(user?.studentId || "");
       
-      if (result.fullName === "") {
-        throw new Error("Diplôme inexistant");
+      if (isValid) {
+        setDiplomas([{
+          id: user?.studentId,
+          fullName: result.fullName,
+          birthDate: result.birthDate,
+          title: result.title,
+          mention: result.mention,
+          year: Number(result.year),
+          ipfsHash: result.ipfsHash,
+          institutionAddress: result.institutionAddress,
+          institutionName: result.institutionName,
+          timestamp: Number(result.timestamp)
+        }]);
       }
-
-      setDiploma({
-        fullName: result.fullName,
-        birthDate: result.birthDate,
-        title: result.title,
-        mention: result.mention,
-        year: Number(result.year),
-        ipfsHash: result.ipfsHash,
-        institutionAddress: result.institutionAddress,
-        institutionName: result.institutionName,
-        timestamp: Number(result.timestamp)
-      });
     } catch (err) {
-      console.error(err);
-      setError("Désolé, aucun diplôme trouvé pour cet identifiant.");
+      console.error("Fetch failed", err);
     } finally {
       setLoading(false);
     }
   };
 
-  const getIPFSUrl = (hash) => `https://gateway.pinata.cloud/ipfs/${hash}`;
-
-  const copyLink = () => {
-    const url = `${window.location.origin}/verifier?id=${diplomaId}`;
-    navigator.clipboard.writeText(url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const toggleFavorite = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newFavs = favorites.includes(id) 
+      ? favorites.filter(f => f !== id) 
+      : [...favorites, id];
+    setFavorites(newFavs);
+    localStorage.setItem(`diplo_favs_${user?.email}`, JSON.stringify(newFavs));
   };
 
+  const sortedAndFiltered = useMemo(() => {
+    let result = diplomas.filter(d => 
+      d.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      d.institutionName.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+
+    if (filterType !== 'All') {
+      result = result.filter(d => d.title.includes(filterType));
+    }
+
+    result.sort((a, b) => {
+      // Favorites first
+      const aFav = favorites.includes(a.id) ? 1 : 0;
+      const bFav = favorites.includes(b.id) ? 1 : 0;
+      if (aFav !== bFav) return bFav - aFav;
+
+      if (sortBy === 'yearDesc') return b.year - a.year;
+      if (sortBy === 'yearAsc') return a.year - b.year;
+      return a.title.localeCompare(b.title);
+    });
+
+    return result;
+  }, [diplomas, searchQuery, sortBy, filterType, favorites]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen py-40 flex flex-col items-center justify-center">
+         <Loader2 className="animate-spin text-burkina-red mb-4" size={40} />
+         <p className="text-[10px] font-black uppercase text-ui-muted tracking-widest">Initialisation de votre coffre-fort numérique...</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="max-w-6xl mx-auto py-32 px-4">
-      <div className="mb-16 text-center">
-        <motion.div
-           initial={{ scale: 0 }}
-           animate={{ scale: 1 }}
-           className="inline-block p-4 bg-burkina-yellow/10 rounded-3xl mb-4 border border-burkina-yellow/20"
-        >
-          <Award size={48} className="text-burkina-yellow" />
-        </motion.div>
-        <h1 className="heading-xl text-ui-text mb-4 tracking-tighter">
-          Espace <span className="text-burkina-yellow">Diplômé</span>
-        </h1>
-        <p className="body-lg max-w-2xl mx-auto italic">
-          Accédez à la preuve numérique de votre réussite et téléchargez votre certificat certifié par DiploChain.
-        </p>
-      </div>
-
-      <div className="max-w-2xl mx-auto mb-20">
-        <form onSubmit={searchDiploma} className="relative group">
-           <div className="absolute inset-x-4 -top-8 text-[11px] font-black uppercase tracking-widest text-ui-muted italic">
-             Numéro de Certification Blockchain
-           </div>
-           <div className="flex flex-col sm:flex-row gap-4 p-3 bg-ui-card rounded-[32px] border border-ui-border shadow-2xl focus-within:border-burkina-yellow/50 transition-all overflow-hidden">
-             <input 
-               type="text" 
-               placeholder="Ex: DIPL-2024-001"
-               value={diplomaId}
-               onChange={(e) => setDiplomaId(e.target.value)}
-               className="flex-1 bg-transparent px-6 py-4 text-xl font-heading font-black text-burkina-yellow placeholder:text-ui-muted outline-none uppercase italic"
-             />
-             <Button type="submit" loading={loading} icon={Search} className="h-16 px-10 rounded-[24px]">
-               VOIR MON DIPLÔME
-             </Button>
-           </div>
-        </form>
-      </div>
-
-      <AnimatePresence mode="wait">
-        {loading ? (
-          <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <LoadingBlockchain message="Extraction des données chiffrées..." />
-          </motion.div>
-        ) : error ? (
-          <motion.div 
-            key="error"
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="max-w-xl mx-auto p-12 glass-card border-burkina-red/30 text-center"
-          >
-            <AlertCircle size={64} className="text-burkina-red mx-auto mb-6" />
-            <h3 className="text-2xl font-bold text-ui-text mb-3 uppercase tracking-tight">Diplôme Introuvable</h3>
-            <p className="text-ui-muted mb-8 font-medium">{error}</p>
-            <Button variant="ghost" onClick={() => setError("")}>RESAISIR LE MATRICULE</Button>
-          </motion.div>
-        ) : diploma && (
-          <motion.div 
-            key="result"
-            initial={{ opacity: 0, y: 50 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="grid grid-cols-1 lg:grid-cols-12 gap-12"
-          >
-            {/* Diploma Card Preview */}
-            <div className="lg:col-span-8">
-              <Card className="p-0 border-none bg-gradient-to-br from-ui-bg via-ui-surface to-ui-bg" hoverEffect={false}>
-                 <div className="relative p-12 min-h-[550px] flex flex-col justify-between overflow-hidden rounded-[32px] border-2 border-ui-border shadow-2xl">
-                    {/* Decorative Elements */}
-                    <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-burkina-red via-burkina-yellow to-burkina-green" />
-                    <div className="absolute -top-20 -right-20 opacity-5 text-ui-text">
-                       <Award size={400} />
-                    </div>
-                    
-                    {/* Header */}
-                    <div className="flex justify-between items-start relative z-10">
-                       <div className="bg-ui-text p-4 rounded-2xl shadow-xl">
-                          <Building className="text-ui-bg" size={32} />
-                       </div>
-                       <div className="text-right">
-                          <div className="text-[10px] font-black text-burkina-yellow uppercase tracking-widest mb-1 italic">Vérification Automatique</div>
-                          <div className="text-[10px] font-mono text-ui-muted break-all max-w-[200px]">{diploma.ipfsHash}</div>
-                       </div>
-                    </div>
-
-                    {/* Main Content */}
-                    <div className="text-center my-12 relative z-10">
-                       <h4 className="text-burkina-yellow font-black uppercase tracking-widest text-xs mb-4 italic">REPUBLIQUE DU BURKINA FASO</h4>
-                       <p className="text-ui-muted text-[9px] uppercase font-black mb-8 tracking-[0.3em]">CERTIFICAT DE RÉUSSITE NUMÉRIQUE BLOCKCHAIN</p>
-                       
-                       <h2 className="text-2xl md:text-4xl font-heading font-black text-ui-text mb-6 uppercase italic tracking-tighter">
-                           {diploma.fullName}
-                       </h2>
-                       
-                       <div className="flex items-center justify-center gap-4 mb-10">
-                          <div className="h-0.5 w-12 bg-burkina-red" />
-                          <div className="h-0.5 w-12 bg-burkina-yellow" />
-                          <div className="h-0.5 w-12 bg-burkina-green" />
-                       </div>
-                       
-                       <p className="text-lg text-ui-muted max-w-xl mx-auto leading-relaxed font-medium">
-                          A validé avec succès le grade académique de <br />
-                          <span className="text-ui-text font-heading font-black uppercase italic tracking-tight">{diploma.title}</span>
-                       </p>
-                    </div>
-
-                    {/* Footer Infos */}
-                    <div className="grid grid-cols-3 gap-8 pt-12 border-t border-ui-border relative z-10">
-                       <div className="space-y-1">
-                          <span className="block text-[8px] font-black text-ui-muted uppercase tracking-widest opacity-60">Mention Exceptionnelle</span>
-                          <span className="text-base font-heading font-black text-burkina-green uppercase italic">{diploma.mention}</span>
-                       </div>
-                       <div className="text-center space-y-1">
-                          <span className="block text-[8px] font-black text-ui-muted uppercase tracking-widest opacity-60">Année de Promotion</span>
-                          <span className="text-base font-heading font-black text-ui-text italic">{diploma.year}</span>
-                       </div>
-                       <div className="text-right space-y-1">
-                          <span className="block text-[8px] font-black text-ui-muted uppercase tracking-widest opacity-60">Établissement Émetteur</span>
-                          <span className="text-xs font-black text-ui-text uppercase leading-none italic">{diploma.institutionName}</span>
-                       </div>
-                    </div>
-                    
-                    {/* Watermark */}
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                       <span className="text-[140px] font-black text-ui-text/5 -rotate-12 uppercase italic tracking-tighter">CERTIFIÉ</span>
-                    </div>
-                 </div>
-              </Card>
-
-              {/* Actions */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-12">
-                 <Button 
-                   size="lg" 
-                   variant="primary" 
-                   icon={Download}
-                   className="shadow-xl h-16"
-                   onClick={() => window.open(getIPFSUrl(diploma.ipfsHash), '_blank')}
-                 >
-                   PDF ORIGINAL
-                 </Button>
-                 <Button 
-                   size="lg" 
-                   variant="secondary" 
-                   icon={copied ? CheckCircle2 : Copy}
-                   className="h-16"
-                   onClick={copyLink}
-                 >
-                   {copied ? 'LIEN COPIÉ !' : 'COPIER LE LIEN'}
-                 </Button>
-                 <Button 
-                   size="lg" 
-                   variant="outline" 
-                   icon={ExternalLink}
-                   className="h-16"
-                   onClick={() => window.open(`https://amoy.polygonscan.com/address/${CONTRACT_ADDRESS}`, '_blank')}
-                 >
-                   AUDIT RÉSEAU
-                 </Button>
-              </div>
+    <div className="min-h-screen bg-ui-bg pt-32 pb-20 px-4">
+      <div className="max-w-6xl mx-auto">
+        
+        {/* Header */}
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-8 mb-16">
+          <div>
+            <div className="flex items-center gap-3 mb-4">
+               <div className="w-12 h-12 rounded-2xl bg-burkina-red/10 flex items-center justify-center text-burkina-red border border-burkina-red/20 shadow-lg shadow-burkina-red/5">
+                  <Award size={24} />
+               </div>
+               <div>
+                  <h1 className="text-3xl font-bold text-ui-text tracking-tighter">Mon Espace <span className="text-burkina-red underline decoration-burkina-red/20 underline-offset-4">Diplômé</span></h1>
+                  <p className="text-[10px] font-black text-ui-muted uppercase tracking-widest italic mt-1">Registre Blockchain Officiel ✓</p>
+               </div>
             </div>
+          </div>
 
-            {/* Sidebar Tools */}
-            <div className="lg:col-span-4 space-y-8">
-              <Card className="text-center p-8 bg-ui-card border-ui-border border-2">
-                 <h3 className="text-[11px] font-black text-ui-muted uppercase mb-8 tracking-[0.2em] italic">Code de Validation Rapide</h3>
-                 <div className="bg-white p-6 inline-block rounded-[40px] shadow-2xl relative mb-8 border-4 border-ui-border">
-                    <QRCodeSVG 
-                      value={`${window.location.origin}/verifier?id=${diplomaId}`}
-                      size={180}
-                      level="H"
-                      includeMargin={false}
-                      imageSettings={{
-                        src: "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/Flag_of_Burkina_Faso.svg/1024px-Flag_of_Burkina_Faso.svg.png",
-                        x: undefined,
-                        y: undefined,
-                        height: 36,
-                        width: 36,
-                        excavate: true,
-                      }}
-                    />
-                 </div>
-                 <p className="text-[11px] text-ui-muted leading-relaxed uppercase font-bold tracking-tight px-6 italic">
-                    Présentez ce QR Code pour une vérification instantanée de vos compétences par tout recruteur.
-                 </p>
-              </Card>
+          <div className="flex items-center gap-4 p-2 bg-ui-card border border-ui-border rounded-2xl">
+             <button 
+                onClick={() => setViewMode('grid')}
+                className={`p-2 rounded-xl transition-all ${viewMode === 'grid' ? 'bg-ui-text text-ui-bg' : 'text-ui-muted hover:text-ui-text'}`}
+             >
+                <LayoutGrid size={20} />
+             </button>
+             <button 
+                onClick={() => setViewMode('list')}
+                className={`p-2 rounded-xl transition-all ${viewMode === 'list' ? 'bg-ui-text text-ui-bg' : 'text-ui-muted hover:text-ui-text'}`}
+             >
+                <ListIcon size={20} />
+             </button>
+          </div>
+        </div>
 
-              <Card className="p-8 border-burkina-green/20 bg-burkina-green/5">
-                 <div className="flex items-center gap-3 mb-8">
-                    <ShieldCheck className="text-burkina-green" />
-                    <h3 className="text-xs font-black text-ui-text uppercase tracking-widest italic">Méta-Source Blockchain</h3>
-                 </div>
-                 <div className="space-y-6 font-mono text-[10px] uppercase">
-                    <div className="flex flex-col gap-1">
-                       <span className="text-ui-muted opacity-60">ID Diplôme Unique</span>
-                       <span className="text-ui-text font-bold break-all bg-ui-surface p-2 rounded-lg">{diplomaId}</span>
+        {/* Toolbar */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-10">
+          <div className="relative md:col-span-2">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-ui-muted" size={18} />
+            <input 
+              type="text" 
+              placeholder="Rechercher un diplôme..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="input-field w-full pl-12"
+            />
+          </div>
+          <div className="relative">
+             <Filter className="absolute left-4 top-1/2 -translate-y-1/2 text-ui-muted" size={16} />
+             <select 
+               className="input-field w-full pl-12 font-bold h-full"
+               value={sortBy}
+               onChange={(e) => setSortBy(e.target.value as any)}
+             >
+               <option value="yearDesc">Année (Récent)</option>
+               <option value="yearAsc">Année (Ancien)</option>
+               <option value="title">Alphabétique</option>
+             </select>
+          </div>
+          <div className="relative">
+             <select 
+               className="input-field w-full font-bold h-full"
+               value={filterType}
+               onChange={(e) => setFilterType(e.target.value)}
+             >
+               <option value="All">Tous les niveaux</option>
+               <option value="Licence">Licence</option>
+               <option value="Master">Master</option>
+               <option value="Doctorat">Doctorat</option>
+               <option value="Bac">Baccalauréat</option>
+             </select>
+          </div>
+        </div>
+
+        {/* Empty State */}
+        {sortedAndFiltered.length === 0 ? (
+          <Card className="py-24 text-center">
+             <Award size={64} className="text-ui-muted/30 mx-auto mb-6" />
+             <h3 className="text-xl font-bold text-ui-text uppercase mb-2">Coffre-fort vide</h3>
+             <p className="text-ui-muted max-w-sm mx-auto font-medium italic">
+               Si vous avez déjà obtenu votre diplôme, contactez votre établissement pour l'émettre sur la blockchain DiploChain.
+             </p>
+          </Card>
+        ) : (
+          <div className={viewMode === 'grid' ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8" : "space-y-4"}>
+            {sortedAndFiltered.map((d, idx) => (
+              <motion.div
+                key={d.id}
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: idx * 0.1 }}
+              >
+                {viewMode === 'grid' ? (
+                  <Card className="h-full flex flex-col p-8 group relative overflow-hidden" onClick={() => setSelectedDiploma(d)}>
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-burkina-red/5 blur-3xl opacity-0 group-hover:opacity-100 transition-opacity" />
+                    
+                    <div className="flex justify-between items-start mb-6">
+                       <span className="px-3 py-1 rounded-full bg-burkina-green/10 text-burkina-green text-[9px] font-black uppercase tracking-widest">
+                          On-Chain ✓
+                       </span>
+                       <button 
+                        onClick={(e) => toggleFavorite(d.id, e)}
+                        className={`transition-colors ${favorites.includes(d.id) ? 'text-burkina-yellow' : 'text-ui-muted hover:text-ui-text'}`}
+                       >
+                          <Star size={20} fill={favorites.includes(d.id) ? 'currentColor' : 'none'} />
+                       </button>
                     </div>
-                    <div className="flex flex-col gap-1">
-                       <span className="text-ui-muted opacity-60">Empreinte IPFS (CID)</span>
-                       <span className="text-burkina-yellow font-bold break-all bg-ui-surface p-2 rounded-lg">{diploma.ipfsHash}</span>
+
+                    <h3 className="text-lg font-bold text-ui-text uppercase leading-tight mb-2 flex-1">{d.title}</h3>
+                    <p className="text-[11px] font-bold text-ui-muted uppercase tracking-tight mb-6 italic">{d.institutionName}</p>
+
+                    <div className="space-y-4 pt-6 border-t border-ui-border mt-auto">
+                       <div className="flex justify-between text-[11px] font-bold uppercase tracking-widest text-ui-muted">
+                          <span>Promotion</span>
+                          <span className="text-ui-text">{d.year}</span>
+                       </div>
+                       <div className="flex justify-between text-[11px] font-bold uppercase tracking-widest text-ui-muted">
+                          <span>Mention</span>
+                          <span className="text-ui-text">{d.mention}</span>
+                       </div>
                     </div>
-                    <div className="flex flex-col gap-1">
-                       <span className="text-ui-muted opacity-60">Horodatage de Certification</span>
-                       <span className="text-ui-text font-bold bg-ui-surface p-2 rounded-lg">{new Date(diploma.timestamp * 1000).toLocaleString()}</span>
+
+                    <div className="grid grid-cols-2 gap-3 mt-8">
+                       <button 
+                         onClick={(e) => { e.stopPropagation(); downloadIPFSFile(d.ipfsHash, `DiploChain_${user?.name}_${d.id}.pdf`); }}
+                         className="flex items-center justify-center gap-2 py-3 rounded-xl bg-ui-surface border border-ui-border text-[10px] font-black uppercase tracking-tighter hover:bg-ui-text hover:text-ui-bg transition-all"
+                       >
+                          <Download size={14} /> PDF
+                       </button>
+                       <button 
+                         onClick={(e) => { e.stopPropagation(); generateAttestationPDF(d); }}
+                         className="flex items-center justify-center gap-2 py-3 rounded-xl bg-ui-surface border border-ui-border text-[10px] font-black uppercase tracking-tighter hover:bg-ui-text hover:text-ui-bg transition-all"
+                       >
+                          <Printer size={14} /> Preuve
+                       </button>
                     </div>
-                 </div>
-              </Card>
-            </div>
-          </motion.div>
+                  </Card>
+                ) : (
+                  <Card className="p-5 flex items-center justify-between gap-6 group cursor-pointer" onClick={() => setSelectedDiploma(d)}>
+                    <div className="flex items-center gap-6 min-w-0">
+                       <div className="w-12 h-12 rounded-2xl bg-ui-surface flex items-center justify-center text-burkina-red border border-ui-border shadow-sm group-hover:scale-110 transition-transform">
+                          <Award size={20} />
+                       </div>
+                       <div className="min-w-0">
+                          <h3 className="text-sm font-bold text-ui-text uppercase truncate">{d.title}</h3>
+                          <p className="text-[10px] text-ui-muted uppercase font-bold truncate">{d.institutionName} • {d.year}</p>
+                       </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                       <div className="hidden md:flex flex-col text-right">
+                          <span className="text-[9px] font-black text-ui-muted uppercase tracking-widest mb-1 italic">Matricule Blockchain</span>
+                          <span className="text-[10px] font-mono font-bold text-burkina-red">{d.id}</span>
+                       </div>
+                       <div className="h-10 w-px bg-ui-border mx-2" />
+                       <button 
+                        onClick={(e) => { e.stopPropagation(); generateAttestationPDF(d); }}
+                        className="p-3 rounded-xl bg-ui-surface border border-ui-border text-ui-muted hover:text-ui-text transition-all"
+                       >
+                          <Printer size={18} />
+                       </button>
+                       <ChevronRight size={20} className="text-ui-muted" />
+                    </div>
+                  </Card>
+                )}
+              </motion.div>
+            ))}
+          </div>
         )}
-      </AnimatePresence>
+
+        {/* Modal for details */}
+        <AnimatePresence>
+          {selectedDiploma && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+               <motion.div 
+                 initial={{ opacity: 0 }}
+                 animate={{ opacity: 1 }}
+                 exit={{ opacity: 0 }}
+                 className="absolute inset-0 bg-ui-bg/80 backdrop-blur-md"
+                 onClick={() => setSelectedDiploma(null)}
+               />
+               <motion.div 
+                 initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                 animate={{ opacity: 1, scale: 1, y: 0 }}
+                 exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                 className="relative w-full max-w-2xl bg-ui-card border-2 border-ui-border rounded-[40px] shadow-2xl overflow-hidden"
+               >
+                  <div className="p-10">
+                     <div className="flex justify-between items-start mb-10">
+                        <div>
+                           <span className="px-3 py-1 rounded-full bg-burkina-green/10 text-burkina-green text-[10px] font-black uppercase tracking-widest">Détails Certifiés</span>
+                           <h2 className="text-2xl font-bold text-ui-text mt-4 uppercase tracking-tighter">{selectedDiploma.title}</h2>
+                        </div>
+                        <button onClick={() => setSelectedDiploma(null)} className="p-3 rounded-full bg-ui-surface text-ui-muted hover:text-burkina-red transition-colors">
+                           <AlertCircle size={24} className="rotate-45" />
+                        </button>
+                     </div>
+
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-8 mb-12">
+                        <div className="space-y-1">
+                           <p className="text-[10px] font-black text-ui-muted uppercase tracking-widest">Titulaire</p>
+                           <p className="font-bold text-ui-text uppercase">{selectedDiploma.fullName}</p>
+                        </div>
+                        <div className="space-y-1">
+                           <p className="text-[10px] font-black text-ui-muted uppercase tracking-widest">Établissement</p>
+                           <p className="font-bold text-ui-text uppercase">{selectedDiploma.institutionName}</p>
+                        </div>
+                        <div className="space-y-1">
+                           <p className="text-[10px] font-black text-ui-muted uppercase tracking-widest">Mention</p>
+                           <p className="font-bold text-ui-text uppercase">{selectedDiploma.mention}</p>
+                        </div>
+                        <div className="space-y-1">
+                           <p className="text-[10px] font-black text-ui-muted uppercase tracking-widest">Année / Session</p>
+                           <p className="font-bold text-ui-text uppercase">{selectedDiploma.year}</p>
+                        </div>
+                     </div>
+
+                     <div className="p-6 rounded-3xl bg-ui-surface border border-ui-border mb-10 flex flex-col md:flex-row items-center gap-6">
+                        <div className="flex-1 min-w-0">
+                           <p className="text-[9px] font-black text-ui-muted uppercase tracking-widest mb-1">Identifiant Blockchain Unique</p>
+                           <p className="text-[10px] font-mono text-ui-text font-bold truncate">{selectedDiploma.id}</p>
+                        </div>
+                        <div className="flex gap-3">
+                           <button onClick={() => downloadQRCode(selectedDiploma.id)} className="p-3 rounded-xl bg-ui-bg border border-ui-border text-ui-muted hover:text-burkina-yellow transition-all" title="Télécharger QR Code">
+                              <QrCode size={18} />
+                           </button>
+                           <button onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/verifier?id=${selectedDiploma.id}`); alert("Lien copié !"); }} className="p-3 rounded-xl bg-ui-bg border border-ui-border text-ui-muted hover:text-burkina-red transition-all" title="Copier lien">
+                              <Share2 size={18} />
+                           </button>
+                        </div>
+                     </div>
+
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <Button 
+                          variant="primary" 
+                          className="h-16 shadow-xl" 
+                          icon={Download}
+                          onClick={() => downloadIPFSFile(selectedDiploma.ipfsHash, `DiploChain_${selectedDiploma.fullName}_${selectedDiploma.id}.pdf`)}
+                        >
+                          TÉLÉCHARGER PDF
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          className="h-16 border-2" 
+                          icon={Printer}
+                          onClick={() => generateAttestationPDF(selectedDiploma)}
+                        >
+                          IMPRIMER PREUVE
+                        </Button>
+                     </div>
+                  </div>
+               </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
   );
-}
+};
+
+export default Diplome;
